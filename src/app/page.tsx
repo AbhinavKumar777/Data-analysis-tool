@@ -1,103 +1,199 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useCallback } from 'react';
+import { Toaster } from 'react-hot-toast';
+import Chatbot from '@/components/Chatbot';
+import Spreadsheet from '@/components/Spreadsheet';
+import SheetManager from '@/components/SheetManager';
+import { CellData, SpreadsheetCommand } from '@/types';
+import { FirebaseService } from '@/services/firebaseService';
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [currentCommand, setCurrentCommand] = useState<SpreadsheetCommand | null>(null);
+  const [sheetData, setSheetData] = useState<{ [key: string]: CellData }>({});
+  const [selectedCell, setSelectedCell] = useState<string>('A1');
+  const [formulaBar, setFormulaBar] = useState<string>('');
+  const [activeSheetId, setActiveSheetId] = useState<string>('sheet1');
+  const firebaseService = FirebaseService.getInstance();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleCommand = useCallback((command: SpreadsheetCommand) => {
+    // If it's a formula (cell undefined, value starts with '=')
+    if (!command.cell && typeof command.value === 'string' && command.value.startsWith('=')) {
+      const formulaValue = command.value;
+      setSheetData(prev => ({
+        ...prev,
+        [selectedCell]: {
+          id: selectedCell,
+          value: formulaValue,
+          type: 'formula' as const,
+          formula: formulaValue
+        } as CellData
+      }));
+      setTimeout(() => setCurrentCommand(null), 100);
+      return;
+    }
+    setCurrentCommand(command);
+    setTimeout(() => setCurrentCommand(null), 100);
+  }, [selectedCell]);
+
+  const handleDataChange = useCallback(async (data: { [key: string]: CellData }) => {
+    setSheetData(data);
+  }, []);
+
+  const handleCellSelect = useCallback((cellRef: string) => {
+    setSelectedCell(cellRef);
+    const cell = sheetData[cellRef];
+    // Show formula if it exists, otherwise show the display value
+    setFormulaBar(cell?.formula || cell?.value?.toString() || '');
+  }, [sheetData]);
+
+  const handleFormulaBarChange = useCallback((value: string) => {
+    setFormulaBar(value);
+  }, []);
+
+  const handleFormulaBarEnter = useCallback(() => {
+    // Update the selected cell with the formula bar value
+    if (formulaBar.startsWith('=')) {
+      // It's a formula
+      setSheetData(prev => ({
+        ...prev,
+        [selectedCell]: {
+          id: selectedCell,
+          value: formulaBar, // Will be evaluated by the spreadsheet component
+          type: 'formula' as const,
+          formula: formulaBar
+        }
+      }));
+    } else {
+      // Regular value
+      const numValue = Number(formulaBar);
+      const isNumber = !isNaN(numValue) && formulaBar.trim() !== '';
+      
+      setSheetData(prev => ({
+        ...prev,
+        [selectedCell]: {
+          id: selectedCell,
+          value: isNumber ? numValue : formulaBar,
+          type: isNumber ? 'number' as const : 'text' as const
+        }
+      }));
+    }
+  }, [selectedCell, formulaBar]);
+
+  const handleSheetChange = useCallback((data: { [key: string]: CellData }) => {
+    setSheetData(data);
+  }, []);
+
+  const handleActiveSheetChange = useCallback((sheetId: string) => {
+    setActiveSheetId(sheetId);
+  }, []);
+
+  return (
+    <div className="h-screen flex flex-col bg-white">
+      {/* Google Sheets-style Top Bar */}
+      <div className="flex items-center px-2 py-1 border-b bg-white shadow-sm w-full" style={{ minHeight: 48 }}>
+        <img src="/file.svg" alt="Sheets Logo" className="w-8 h-8 mr-2" />
+        <input
+          className="text-lg font-semibold bg-transparent border-none outline-none px-2 py-1 rounded hover:bg-gray-100 transition w-64"
+          defaultValue="Untitled Spreadsheet"
+        />
+        <div className="flex-1" />
+        <button className="px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded">Last edit was seconds ago</button>
+        <button className="ml-2 px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded">Share</button>
+        <img src="/globe.svg" alt="Account" className="w-8 h-8 ml-4 rounded-full border" />
+      </div>
+
+      {/* Simplified Working Toolbar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-white w-full" style={{ minHeight: 40 }}>
+        <span className="text-sm font-medium text-gray-700">Actions:</span>
+        <button 
+          className="px-3 py-1 text-sm bg-blue-50 hover:bg-blue-100 text-blue-700 rounded border border-blue-200"
+          onClick={() => {
+            // Clear selected cell
+            if (selectedCell) {
+              setSheetData(prev => {
+                const newData = { ...prev };
+                delete newData[selectedCell];
+                return newData;
+              });
+            }
+          }}
+        >
+          Clear Cell
+        </button>
+        <button 
+          className="px-3 py-1 text-sm bg-green-50 hover:bg-green-100 text-green-700 rounded border border-green-200"
+          onClick={() => {
+            // Add sample data
+            setSheetData(prev => ({
+              ...prev,
+              'A1': { id: 'A1', value: 10, type: 'number' },
+              'B1': { id: 'B1', value: 20, type: 'number' },
+              'C1': { id: 'C1', value: 30, type: 'number', formula: '=A1+B1' }
+            }));
+          }}
+        >
+          Add Sample Data
+        </button>
+        <div className="flex-1" />
+        <span className="text-xs text-gray-500">Selected: {selectedCell}</span>
+      </div>
+
+      {/* Name Box and Formula Bar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-white">
+        <div className="w-20 px-2 py-1 border border-gray-300 rounded text-sm font-mono bg-white">
+          {selectedCell}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+        <span className="text-gray-400">fx</span>
+        <input
+          type="text"
+          value={formulaBar}
+          onChange={(e) => handleFormulaBarChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleFormulaBarEnter();
+            }
+          }}
+          className="flex-1 px-3 py-1 border border-gray-300 rounded text-sm font-mono bg-white"
+          placeholder="Enter formula or value..."
+        />
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Chatbot Section - Left Side */}
+        <div className="w-80 flex flex-col border-r border-gray-200">
+          <Chatbot onCommand={handleCommand} />
+        </div>
+
+        {/* Spreadsheet Section */}
+        <div className="flex-1 flex flex-col">
+          <SheetManager 
+            onSheetChange={handleSheetChange}
+            onActiveSheetChange={handleActiveSheetChange}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
+          <Spreadsheet 
+            onDataChange={handleDataChange}
+            executeCommand={currentCommand}
+            onCellSelect={handleCellSelect}
+            selectedCell={selectedCell}
+            data={sheetData}
           />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        </div>
+      </div>
+
+      {/* Toast Notifications */}
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+        }}
+      />
     </div>
   );
 }
